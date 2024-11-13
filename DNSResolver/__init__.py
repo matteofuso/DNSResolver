@@ -1,5 +1,6 @@
 from enum import Enum
 import DNSResolver.DNSPacket as DNSPacket
+import ipaddress
 import datetime
 import socket
 
@@ -14,7 +15,6 @@ class DNSResolver:
         self.__root_srv = {IPVersion.IPV4: [], IPVersion.IPV6: []}
         self.__cached_records = {}
         self.__loadRootNS("named.root")
-        print(self.__root_srv)
 
     def __loadRootNS(self, file: str) -> None:
         root_srv_domains = []
@@ -39,44 +39,45 @@ class DNSResolver:
                     ]
                 )
         for domain in root_srv_domains:
-            self.__root_srv[IPVersion.IPV4] + self.__check_cache(domain, DNSPacket.QTYPE.A)
-            # self.__root_srv[IPVersion.IPV6].append(
-            #     [
-            #         self.__get_values(record)
-            #         for record in self.__check_cache(domain, DNSPacket.QTYPE.AAAA)
-            #     ]
-            # )
+            self.__root_srv[IPVersion.IPV4] += self.__check_cache(
+                domain, DNSPacket.QTYPE.A
+            ).answer_records
+            self.__root_srv[IPVersion.IPV6] += self.__check_cache(
+                domain, DNSPacket.QTYPE.AAAA
+            ).answer_records
+
+    def __sanitize_domain(self, domain: str) -> str:
+        return domain.lower().strip(".") + "."
 
     def __cache_records(self, records: list[DNSPacket.DNSRecord]) -> None:
         for record in records:
             if record.qtype not in self.__cached_records:
                 self.__cached_records[record.qtype] = {}
-            sanitized_name = record.name.lower().strip(".") + "."
+            sanitized_name = self.__sanitize_domain(record.name)
             if sanitized_name not in self.__cached_records[record.qtype]:
                 self.__cached_records[record.qtype][sanitized_name] = []
             self.__cached_records[record.qtype][record.name].append(record)
 
     def __check_cache(
         self, fqdn: str, qtype: DNSPacket.QTYPE
-    ) -> list[DNSPacket.DNSRecord] | None:
-        sanitized_name = fqdn.lower().strip(".") + "."
+    ) -> DNSPacket.DNSPacket | None:
+        sanitized_name = self.__sanitize_domain(fqdn)
         if qtype in self.__cached_records:
             if sanitized_name in self.__cached_records[qtype]:
-                return self.__cached_records[qtype][fqdn]
+                return DNSPacket.DNSPacket(
+                    answer_records=self.__cached_records[qtype][fqdn]
+                )
         return None
-
-    def __get_values(self, records: list[DNSPacket.DNSRecord]) -> list[str]:
-        return [record.rdata for record in records]
 
     def send_query(
         self,
-        domain: str,
+        fqdn: str,
         qtype: DNSPacket.QTYPE,
         servers: list[str] = [],
         rd: DNSPacket.RD = DNSPacket.RD.NO_RECURSION,
     ) -> DNSPacket.DNSPacket | None:
         dnsheader = DNSPacket.DNSHeader(rd=rd)
-        dnsquestion = DNSPacket.DNSQuestion(domain, qtype)
+        dnsquestion = DNSPacket.DNSQuestion(self.__sanitize_domain(fqdn), qtype)
         dnspacket = DNSPacket.DNSPacket(dnsheader, [dnsquestion], [], [], [])
         request_data = dnspacket.toBytes()
         if len(servers) == 0:
@@ -104,23 +105,57 @@ class DNSResolver:
     def recursive_query(
         self, fqdn: str, qtype: DNSPacket.QTYPE = DNSPacket.QTYPE.A
     ) -> DNSPacket.DNSPacket | None:
+        fqdn = self.__sanitize_domain(fqdn)
         cache = self.__check_cache(fqdn, qtype)
         if cache:
             return cache
-        servers = self.__root_srv[IPVersion.IPV4]
-        while servers != []:
-            print(servers)
-            response = self.send_query(fqdn, qtype, servers)
+        servers = [server.rdata for server in self.__root_srv[IPVersion.IPV4]]
+        split = fqdn.split(".")
+        for i in range(len(split) - 2, 0, -1):
+            domain = ".".join(split[i:])
+            if not servers:
+                return None
+            response = self.__check_cache(domain, DNSPacket.QTYPE.NS)
+            if not response:
+                response = self.send_query(domain, DNSPacket.QTYPE.NS, servers)
+            if not response:
+                return None
             self.__cache_records(response.answer_records)
             self.__cache_records(response.authority_records)
             self.__cache_records(response.additional_records)
-            if not response or response.header.rcode != DNSPacket.RCODE.NO_ERROR:
+            if (
+                response.header.rcode != DNSPacket.RCODE.NAME_ERROR
+                and response.header.rcode != DNSPacket.RCODE.NO_ERROR
+            ):
                 return None
-            if response.header.ancount > 0:
-                return response
-            servers = [
-                self.__get_values(self.__check_cache(record.rdata, DNSPacket.QTYPE.A))
-                for record in response.authority_records
-            ]
-            print(servers)
-        return None
+            servers = []
+            for record in (
+                response.answer_records
+                + response.authority_records
+                + response.additional_records
+            ):
+                if record.qtype == DNSPacket.QTYPE.NS:
+                    ns_domain = record.rdata
+                elif record.qtype == DNSPacket.QTYPE.SOA:
+                    ns_domain = record.rdata.mname
+                else:
+                    continue
+                records = self.recursive_query(
+                    ns_domain, DNSPacket.QTYPE.A
+                ).answer_records
+                servers += [record.rdata for record in records]
+                break
+        return self.send_query(fqdn, qtype, servers)
+
+    def reverse_lookup_v4(self, ipv4: str) -> DNSPacket.DNSPacket | None:
+        return self.recursive_query(
+            ".".join(ipv4.split(".")[::-1]) + ".in-addr.arpa",
+            DNSPacket.QTYPE.PTR,
+        )
+
+    def reverse_lookup_v6(self, ipv6: str) -> DNSPacket.DNSPacket | None:
+        decompressed = ipaddress.IPv6Address(ipv6).exploded
+        return self.recursive_query(
+            ".".join(decompressed.split(":")[::-1]) + ".ip6.arpa",
+            DNSPacket.QTYPE.PTR,
+        )

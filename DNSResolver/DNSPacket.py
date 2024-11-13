@@ -61,6 +61,7 @@ class QTYPE(Enum):
     A = 1
     NS = 2
     CNAME = 5
+    SOA = 6
     PTR = 12
     AAAA = 28
 
@@ -86,7 +87,6 @@ class DNSComponent:
         bytes_name = b""
         for part in name.split("."):
             bytes_name += len(part).to_bytes(1, "big") + part.encode()
-        bytes_name += b"\x00"
         return bytes_name
 
     def _readNameFromBytes(full_data, offset, limitBytes=-1) -> tuple[str, int]:
@@ -242,6 +242,36 @@ class DNSQuestion(DNSComponent):
         return self.__str__()
 
 
+class SOARdata(DNSComponent):
+    def __init__(self, mname: str, rname: str, serial:int, refresh: int, retry: int, expire: int, minimum: int) -> None:
+        self.mname = mname
+        self.rname = rname
+        self.serial = serial
+        self.refresh = refresh
+        self.retry = retry
+        self.expire = expire
+        self.minimum = minimum
+    
+    def toBytes(self) -> bytes:
+        mname = DNSComponent._nameToBytes(self.mname)
+        rname = DNSComponent._nameToBytes(self.rname)
+        return mname + rname + struct.pack(">IIIII", self.serial, self.refresh, self.retry, self.expire, self.minimum)
+    
+    def fromBytes(full_data: bytes, offset: int) -> tuple["SOARdata", int]:
+        mname, len = DNSComponent._readNameFromBytes(full_data, offset)
+        offset += len
+        rname, len = DNSComponent._readNameFromBytes(full_data, offset)
+        offset += len
+        serial, refresh, retry, expire, minimum = struct.unpack(">IIIII", full_data[offset:offset+20])
+        offset += 20
+        return SOARdata(mname, rname, serial, refresh, retry, expire, minimum), offset
+    
+    def __str__(self) -> str:
+        return f"(mname={self.mname}, rname={self.rname}, serial={self.serial}, refresh={self.refresh}, retry={self.retry}, expire={self.expire}, minimum={self.minimum})"
+    
+    def __repr__(self) -> str:
+        return self.__str__()
+    
 class DNSRecord(DNSComponent):
     # https://datatracker.ietf.org/doc/html/rfc1035#section-4.1.3
     def __init__(
@@ -306,6 +336,8 @@ class DNSRecord(DNSComponent):
                     rdata += full_data[offset + i : offset + i + 2].hex() + ":"
                 rdata = rdata[:-1]
                 len = rdlen
+            elif qtype == QTYPE.SOA.value:
+                rdata, len = SOARdata.fromBytes(full_data, offset)
             offset += len
             records.append(DNSRecord(name, QTYPE(qtype), ttl, rdata, QCLASS(qclass)))
         return records, offset
