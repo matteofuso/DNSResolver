@@ -68,6 +68,14 @@ class DNSResolver:
                 return self.__cached_records[sanitized_name][qtype]
         return None
 
+    def __check_nearest_ns(self, fqdn: str) -> list[DNSPacket.DNSRecord] | None:
+        sanitized_name = self.__sanitize_domain(fqdn)
+        split = sanitized_name.split(".")
+        for i in range(len(split)):
+            nearest_ns = self.__check_cache(".".join(split[i:]), DNSPacket.QTYPE.NS)
+            if nearest_ns:
+                return nearest_ns
+
     def send_query(
         self,
         fqdn: str,
@@ -104,51 +112,61 @@ class DNSResolver:
     def recursive_query(
         self, fqdn: str, qtype: DNSPacket.QTYPE = DNSPacket.QTYPE.A
     ) -> DNSPacket.DNSPacket | None:
+        print(fqdn)
         fqdn = self.__sanitize_domain(fqdn)
         cache = self.__check_cache(fqdn, qtype)
         if cache:
             return DNSPacket.DNSPacket(answer_records=cache)
-        servers = [server.rdata for server in self.__root_srv[IPVersion.IPV4]]
-        split = fqdn.split(".")
-        for i in range(len(split) - 2, 0, -1):
-            domain = ".".join(split[i:])
-            if not servers:
-                return None
-            response = self.__check_cache(domain, DNSPacket.QTYPE.NS)
-            if response:
-                response = DNSPacket.DNSPacket(answer_records=response)
-            else:
-                response = self.send_query(domain, DNSPacket.QTYPE.NS, servers)
+        servers = []
+        nearest_ns = self.__check_nearest_ns(fqdn)
+        if not nearest_ns:
+            servers = [server.rdata for server in self.__root_srv[IPVersion.IPV4]]
+        else:
+            for ns in nearest_ns:
+                servers.append(
+                    self.recursive_query(ns.rdata, DNSPacket.QTYPE.A)
+                    .answer_records[0]
+                    .rdata
+                )
+        while servers:
+            response = self.send_query(fqdn, qtype, servers)
             if not response:
+                return None
+            if response.header.rcode != DNSPacket.RCODE.NO_ERROR:
                 return None
             self.__cache_records(response.answer_records)
             self.__cache_records(response.authority_records)
             self.__cache_records(response.additional_records)
-            if (
-                response.header.rcode != DNSPacket.RCODE.NAME_ERROR
-                and response.header.rcode != DNSPacket.RCODE.NO_ERROR
-            ):
-                return None
+            if response.header.ancount > 0:
+                return response
             servers = []
-            for record in (
-                response.answer_records
-                + response.authority_records
-                + response.additional_records
-            ):
+            ns_list = []
+            for record in response.authority_records + response.additional_records:
                 if record.qtype == DNSPacket.QTYPE.NS:
-                    ns_domain = record.rdata
+                    ns_list.append(record.rdata)
                 elif record.qtype == DNSPacket.QTYPE.SOA:
-                    ns_domain = record.rdata.mname
+                    ns_list.append(record.rdata.mname)
                 else:
                     continue
+            if len(ns_list) == 0:
+                return None
+            for ns_domain in ns_list:
+                records = self.__check_cache(
+                    ns_domain, DNSPacket.QTYPE.A
+                )
+                if records:
+                    servers += [server.rdata for server in records]
+            print(ns_list)
+            if servers:
+                continue
+            for ns_domain in ns_list:
                 records = self.recursive_query(
                     ns_domain, DNSPacket.QTYPE.A
                 ).answer_records
-                if not records:
-                    return None
-                servers += [record.rdata for record in records]
-                break
-        return self.send_query(fqdn, qtype, servers)
+                if records:
+                    servers += [server.rdata for server in records]
+                    break
+        return None
 
     def reverse_lookup_v4(self, ipv4: str) -> DNSPacket.DNSPacket | None:
         return self.recursive_query(
