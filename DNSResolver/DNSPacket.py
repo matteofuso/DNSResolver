@@ -359,14 +359,14 @@ class DNSPacket(DNSComponent):
         additional_records: list[DNSRecord] = [],
     ) -> None:
         self.header = header
-        self.question = questions
-        header.qdcount = len(questions)
-        self.answer_records = answer_records
-        header.ancount = len(answer_records)
-        self.authority_records = authority_records
-        header.nscount = len(authority_records)
-        self.additional_records = additional_records
-        header.arcount = len(additional_records)
+        self.question = questions or []
+        header.qdcount = len(self.question)
+        self.answer_records = answer_records or []
+        header.ancount = len(self.answer_records)
+        self.authority_records = authority_records or []
+        header.nscount = len(self.authority_records)
+        self.additional_records = additional_records or []
+        header.arcount = len(self.additional_records)
 
     def toBytes(self) -> bytes:
         bytes_packet = self.header.toBytes()

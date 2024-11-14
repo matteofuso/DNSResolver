@@ -41,32 +41,31 @@ class DNSResolver:
         for domain in root_srv_domains:
             self.__root_srv[IPVersion.IPV4] += self.__check_cache(
                 domain, DNSPacket.QTYPE.A
-            ).answer_records
+            )
             self.__root_srv[IPVersion.IPV6] += self.__check_cache(
                 domain, DNSPacket.QTYPE.AAAA
-            ).answer_records
+            )
 
     def __sanitize_domain(self, domain: str) -> str:
         return domain.lower().strip(".") + "."
 
-    def __cache_records(self, records: list[DNSPacket.DNSRecord]) -> None:
-        for record in records:
-            if record.qtype not in self.__cached_records:
-                self.__cached_records[record.qtype] = {}
+    def __cache_records(self, packet: list[DNSPacket.DNSRecord]) -> None:
+        for record in packet:
             sanitized_name = self.__sanitize_domain(record.name)
-            if sanitized_name not in self.__cached_records[record.qtype]:
-                self.__cached_records[record.qtype][sanitized_name] = []
-            self.__cached_records[record.qtype][record.name].append(record)
+            if sanitized_name not in self.__cached_records:
+                self.__cached_records[sanitized_name] = {}
+            if record.qtype not in self.__cached_records[sanitized_name]:
+                self.__cached_records[sanitized_name][record.qtype] = []
+            if record not in self.__cached_records[sanitized_name][record.qtype]:
+                self.__cached_records[sanitized_name][record.qtype].append(record)
 
     def __check_cache(
         self, fqdn: str, qtype: DNSPacket.QTYPE
-    ) -> DNSPacket.DNSPacket | None:
+    ) -> list[DNSPacket.DNSRecord] | None:
         sanitized_name = self.__sanitize_domain(fqdn)
-        if qtype in self.__cached_records:
-            if sanitized_name in self.__cached_records[qtype]:
-                return DNSPacket.DNSPacket(
-                    answer_records=self.__cached_records[qtype][fqdn]
-                )
+        if sanitized_name in self.__cached_records:
+            if qtype in self.__cached_records[sanitized_name]:
+                return self.__cached_records[sanitized_name][qtype]
         return None
 
     def send_query(
@@ -83,7 +82,7 @@ class DNSResolver:
         if len(servers) == 0:
             servers = self.__root_srv[IPVersion.IPV4]
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.settimeout(2)
+        sock.settimeout(1)
         for server in servers:
             if server == None or server == "":
                 continue
@@ -108,7 +107,7 @@ class DNSResolver:
         fqdn = self.__sanitize_domain(fqdn)
         cache = self.__check_cache(fqdn, qtype)
         if cache:
-            return cache
+            return DNSPacket.DNSPacket(answer_records=cache)
         servers = [server.rdata for server in self.__root_srv[IPVersion.IPV4]]
         split = fqdn.split(".")
         for i in range(len(split) - 2, 0, -1):
@@ -116,7 +115,9 @@ class DNSResolver:
             if not servers:
                 return None
             response = self.__check_cache(domain, DNSPacket.QTYPE.NS)
-            if not response:
+            if response:
+                response = DNSPacket.DNSPacket(answer_records=response)
+            else:
                 response = self.send_query(domain, DNSPacket.QTYPE.NS, servers)
             if not response:
                 return None
@@ -143,6 +144,8 @@ class DNSResolver:
                 records = self.recursive_query(
                     ns_domain, DNSPacket.QTYPE.A
                 ).answer_records
+                if not records:
+                    return None
                 servers += [record.rdata for record in records]
                 break
         return self.send_query(fqdn, qtype, servers)
@@ -156,6 +159,6 @@ class DNSResolver:
     def reverse_lookup_v6(self, ipv6: str) -> DNSPacket.DNSPacket | None:
         decompressed = ipaddress.IPv6Address(ipv6).exploded
         return self.recursive_query(
-            ".".join(decompressed.split(":")[::-1]) + ".ip6.arpa",
+            ".".join(list(decompressed.replace(":", ""))[::-1]) + ".ip6.arpa",
             DNSPacket.QTYPE.PTR,
         )
