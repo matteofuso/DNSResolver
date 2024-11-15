@@ -83,6 +83,9 @@ class DNSComponent:
     def __repr__(self) -> str:
         pass
 
+    def __eq__(self, value: object) -> bool:
+        pass
+
     def _nameToBytes(name: str) -> bytes:
         bytes_name = b""
         for part in name.split("."):
@@ -205,10 +208,33 @@ class DNSHeader(DNSComponent):
         )
 
     def __str__(self) -> str:
-        return f"(id={self.id}, qr={self.qr}, opcode={self.opcode}, aa={self.aa}, tc={self.tc}, rd={self.rd}, ra={self.ra}, z={self.z}, ad={self.ad}, cd={self.cd}, rcode={self.rcode}, qdcount={self.qdcount}, ancount={self.ancount}, nscount={self.nscount}, arcount={self.arcount})"
+        return f"Header: opcode: {self.opcode}, status: {self.rcode}, id: {self.id}\
+            \nflags: {self.qr} {self.aa} {self.tc} {self.rd} {self.ra} {self.ad} {self.cd}\
+            \nAnswer: {self.ancount}, Authority: {self.nscount}, Additional: {self.arcount}"
 
     def __repr__(self) -> str:
         return self.__str__()
+
+    def __eq__(self, value: object) -> bool:
+        if not isinstance(value, DNSHeader):
+            return False
+        return (
+            self.id == value.id
+            and self.qr == value.qr
+            and self.opcode == value.opcode
+            and self.aa == value.aa
+            and self.tc == value.tc
+            and self.rd == value.rd
+            and self.ra == value.ra
+            and self.z == value.z
+            and self.ad == value.ad
+            and self.cd == value.cd
+            and self.rcode == value.rcode
+            and self.qdcount == value.qdcount
+            and self.ancount == value.ancount
+            and self.nscount == value.nscount
+            and self.arcount == value.arcount
+        )
 
 
 class DNSQuestion(DNSComponent):
@@ -236,14 +262,33 @@ class DNSQuestion(DNSComponent):
         return questions, offset
 
     def __str__(self) -> str:
-        return f"(qname={self.qname}, qtype={self.qtype}, qclass={self.qclass})"
+        return f"{self.qname}\t\t{self.qclass}\t{self.qtype}"
 
     def __repr__(self) -> str:
         return self.__str__()
 
+    def __eq__(self, value: object) -> bool:
+        if not isinstance(value, DNSQuestion):
+            return False
+        return (
+            self.qname == value.qname
+            and self.qtype == value.qtype
+            and self.qclass == value.qclass
+        )
+
 
 class SOARdata(DNSComponent):
-    def __init__(self, mname: str, rname: str, serial:int, refresh: int, retry: int, expire: int, minimum: int) -> None:
+    # https://datatracker.ietf.org/doc/html/rfc1035#section-3.3.13
+    def __init__(
+        self,
+        mname: str,
+        rname: str,
+        serial: int,
+        refresh: int,
+        retry: int,
+        expire: int,
+        minimum: int,
+    ) -> None:
         self.mname = mname
         self.rname = rname
         self.serial = serial
@@ -251,27 +296,54 @@ class SOARdata(DNSComponent):
         self.retry = retry
         self.expire = expire
         self.minimum = minimum
-    
+
     def toBytes(self) -> bytes:
         mname = DNSComponent._nameToBytes(self.mname)
         rname = DNSComponent._nameToBytes(self.rname)
-        return mname + rname + struct.pack(">IIIII", self.serial, self.refresh, self.retry, self.expire, self.minimum)
-    
+        return (
+            mname
+            + rname
+            + struct.pack(
+                ">IIIII",
+                self.serial,
+                self.refresh,
+                self.retry,
+                self.expire,
+                self.minimum,
+            )
+        )
+
     def fromBytes(full_data: bytes, offset: int) -> tuple["SOARdata", int]:
         mname, len = DNSComponent._readNameFromBytes(full_data, offset)
         offset += len
         rname, len = DNSComponent._readNameFromBytes(full_data, offset)
         offset += len
-        serial, refresh, retry, expire, minimum = struct.unpack(">IIIII", full_data[offset:offset+20])
+        serial, refresh, retry, expire, minimum = struct.unpack(
+            ">IIIII", full_data[offset : offset + 20]
+        )
         offset += 20
         return SOARdata(mname, rname, serial, refresh, retry, expire, minimum), offset
-    
+
     def __str__(self) -> str:
-        return f"(mname={self.mname}, rname={self.rname}, serial={self.serial}, refresh={self.refresh}, retry={self.retry}, expire={self.expire}, minimum={self.minimum})"
-    
+        return f"{self.mname} {self.rname} {self.serial} {self.refresh} {self.retry} {self.expire} {self.minimum}"
+
     def __repr__(self) -> str:
         return self.__str__()
-    
+
+    def __eq__(self, value: object) -> bool:
+        if not isinstance(value, SOARdata):
+            return False
+        return (
+            self.mname == value.mname
+            and self.rname == value.rname
+            and self.serial == value.serial
+            and self.refresh == value.refresh
+            and self.retry == value.retry
+            and self.expire == value.expire
+            and self.minimum == value.minimum
+        )
+
+
 class DNSRecord(DNSComponent):
     # https://datatracker.ietf.org/doc/html/rfc1035#section-4.1.3
     def __init__(
@@ -343,10 +415,21 @@ class DNSRecord(DNSComponent):
         return records, offset
 
     def __str__(self) -> str:
-        return f"(name={self.name}, qtype={self.qtype}, qclass={self.qclass}, ttl={self.ttl}, rdata={self.rdata})"
+        return f"{self.name}\t{self.ttl}\t{self.qclass}\t{self.qtype}\t{self.rdata}"
 
     def __repr__(self) -> str:
         return self.__str__()
+
+    def __eq__(self, value: object) -> bool:
+        if not isinstance(value, DNSRecord):
+            return False
+        return (
+            self.name == value.name
+            and self.qtype == value.qtype
+            and self.qclass == value.qclass
+            and self.ttl == value.ttl
+            and self.rdata == value.rdata
+        )
 
 
 class DNSPacket(DNSComponent):
@@ -391,7 +474,31 @@ class DNSPacket(DNSComponent):
         )
 
     def __str__(self) -> str:
-        return f"(header={self.header}, question={self.question}, answer_records={self.answer_records}, authority_records={self.authority_records}, additional_records={self.additional_records})"
+        stringified = f"{self.header}\n"
+        if self.question:
+            stringified += "Questions:\n"
+            for question in self.question:
+                stringified += f"{question}\n"
+        if self.answer_records:
+            stringified += "Answer Records:\n"
+            for record in self.answer_records:
+                stringified += f"{record}\n"
+        if self.authority_records:
+            stringified += "Authority Records:\n"
+            for record in self.authority_records:
+                stringified += f"{record}\n"
+        return stringified
 
     def __repr__(self) -> str:
         return self.__str__()
+
+    def __eq__(self, value: object) -> bool:
+        if not isinstance(value, DNSPacket):
+            return False
+        return (
+            self.header == value.header
+            and self.question == value.question
+            and self.answer_records == value.answer_records
+            and self.authority_records == value.authority_records
+            and self.additional_records == value.additional_records
+        )
