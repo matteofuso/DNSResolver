@@ -14,7 +14,7 @@ def main():
         if choice == "1":
             fqdn = input("Enter the domain name for DNS query: ")
             print("\nDNS response for", fqdn)
-            response = resolver.recursive_query(fqdn, DNSResolver.DNSPacket.QTYPE.A)
+            response = resolver.recursive_query(fqdn)
         elif choice == "2":
             ipv4 = input("Enter the IPv4 address for Reverse DNS lookup: ")
             print("\nReverse DNS IPv4 response for", ipv4)
@@ -25,7 +25,7 @@ def main():
             response = resolver.reverse_lookup_v6(ipv6)
         elif choice == "4":
             fqdn = input("Enter the domain name for DNS query: ")
-            qtype = input("Enter the query type (A, AAAA, MX, TXT, etc.): ")
+            qtype = input("Enter the query type (A, AAAA, NS, SOA, CNAME, PTR): ")
             print("\nDNS response for", fqdn)
             response = resolver.recursive_query(fqdn, qtype)
         elif choice == "5":

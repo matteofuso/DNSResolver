@@ -1,6 +1,7 @@
 from enum import Enum
 import struct
 import datetime
+import ipaddress
 
 
 class QR(Enum):
@@ -262,7 +263,7 @@ class DNSQuestion(DNSComponent):
         return questions, offset
 
     def __str__(self) -> str:
-        return f"{self.qname}\t\t{self.qclass}\t{self.qtype}"
+        return f"{self.qname:<37} {self.qclass:<12}{self.qtype}"
 
     def __repr__(self) -> str:
         return self.__str__()
@@ -407,6 +408,7 @@ class DNSRecord(DNSComponent):
                 for i in range(0, rdlen, 2):
                     rdata += full_data[offset + i : offset + i + 2].hex() + ":"
                 rdata = rdata[:-1]
+                rdata = ipaddress.IPv6Address(rdata).compressed
                 len = rdlen
             elif qtype == QTYPE.SOA.value:
                 rdata, len = SOARdata.fromBytes(full_data, offset)
@@ -415,7 +417,7 @@ class DNSRecord(DNSComponent):
         return records, offset
 
     def __str__(self) -> str:
-        return f"{self.name}\t{self.ttl}\t{self.qclass}\t{self.qtype}\t{self.rdata}"
+        return f"{self.name:<24} {self.ttl:<12} {self.qclass:<12} {self.qtype:<12} {self.rdata}"
 
     def __repr__(self) -> str:
         return self.__str__()
@@ -476,15 +478,15 @@ class DNSPacket(DNSComponent):
     def __str__(self) -> str:
         stringified = f"{self.header}\n"
         if self.question:
-            stringified += "Questions:\n"
+            stringified += "\nQuestions:\n"
             for question in self.question:
                 stringified += f"{question}\n"
         if self.answer_records:
-            stringified += "Answer Records:\n"
+            stringified += "\nAnswer Records:\n"
             for record in self.answer_records:
                 stringified += f"{record}\n"
         if self.authority_records:
-            stringified += "Authority Records:\n"
+            stringified += "\nAuthority Records:\n"
             for record in self.authority_records:
                 stringified += f"{record}\n"
         return stringified
