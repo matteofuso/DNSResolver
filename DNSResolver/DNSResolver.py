@@ -109,7 +109,7 @@ class DNSResolver:
         return None
 
     def recursive_query(
-        self, fqdn: str, qtype: list[DNSPacket.QTYPE | str] = DNSPacket.QTYPE.A
+        self, fqdn: str, qtype: DNSPacket.QTYPE | str = DNSPacket.QTYPE.A
     ) -> DNSPacket.DNSPacket | None:
         
         def get_ns_address(ns_list: list[str]) -> list[str]:
@@ -162,11 +162,10 @@ class DNSResolver:
             for record in response.authority_records + response.additional_records:
                 if record.qtype == DNSPacket.QTYPE.NS:
                     ns_list.append(record)
-                elif record.qtype == DNSPacket.QTYPE.SOA:
-                    ns_list.append(record.rdata.mname)
                 else:
                     continue
             servers = get_ns_address(ns_list)
+        return response
 
     def reverse_lookup_v4(self, ipv4: str) -> DNSPacket.DNSPacket | None:
         try:
